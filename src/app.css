@@ -1,0 +1,60 @@
+:root {
+	/* SMPTE Color Bars - Official broadcast colors */
+	--smpte-white: #c0c0c0;
+	--smpte-yellow: #c0c000;
+	--smpte-cyan: #00c0c0;
+	--smpte-green: #00c000;
+	--smpte-magenta: #c000c0;
+	--smpte-red: #c00000;
+	--smpte-blue: #0000c0;
+	--smpte-black: #000000;
+
+	/* 75% intensity versions */
+	--smpte-75-white: #b4b4b4;
+	--smpte-75-yellow: #b4b400;
+	--smpte-75-cyan: #00b4b4;
+	--smpte-75-green: #00b400;
+	--smpte-75-magenta: #b400b4;
+	--smpte-75-red: #b40000;
+	--smpte-75-blue: #0000b4;
+
+	/* PLUGE blacks */
+	--pluge-superblack: #000000;
+	--pluge-black: #101010;
+	--pluge-gray: #1c1c1c;
+
+	/* I and Q signals */
+	--iq-minus-i: #00214c;
+	--iq-white: #ffffff;
+	--iq-plus-q: #320042;
+
+	/* UI colors */
+	--ui-bg: #0a0a0a;
+	--ui-panel: #141414;
+	--ui-border: #2a2a2a;
+	--ui-text: #9ca3af;
+	--ui-text-bright: #e5e7eb;
+	--ui-accent: #22c55e;
+	--ui-warning: #eab308;
+
+	/* Fonts */
+	--font-mono: 'Share Tech Mono', monospace;
+	--font-display: 'VT323', monospace;
+}
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+html, body {
+	height: 100%;
+	background: var(--ui-bg);
+	color: var(--ui-text);
+	font-family: var(--font-mono);
+}
+
+body {
+	overflow: hidden;
+}
