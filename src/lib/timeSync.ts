@@ -1,61 +1,71 @@
-// Time synchronization with NIST time servers
-// Uses worldtimeapi.org as a proxy since time.gov doesn't have a public API
+// Time synchronization for broadcast environments
+// Default: trusts OS system clock (assumed NTP/PTP-synced to facility grandmaster)
+// Fallback: optional sync via worldtimeapi.org for non-broadcast use
+
+type SyncMode = 'system' | 'ntp-api';
 
 interface TimeData {
-	serverTime: Date;
-	offset: number; // Difference between local and server time in ms
+	offset: number; // Difference between local and reference time in ms
 	lastSync: Date;
 	synced: boolean;
+	mode: SyncMode;
 }
 
 let timeData: TimeData = {
-	serverTime: new Date(),
 	offset: 0,
-	lastSync: new Date(0),
-	synced: false
+	lastSync: new Date(),
+	synced: true,
+	mode: 'system'
 };
 
 let syncInProgress = false;
 
-export async function syncTime(): Promise<TimeData> {
-	if (syncInProgress) {
+/**
+ * Initialize time sync.
+ * 'system' mode (default): zero offset, trusts OS clock is NTP-synced.
+ * 'ntp-api' mode: queries worldtimeapi.org as a fallback for non-broadcast setups.
+ */
+export async function syncTime(mode: SyncMode = 'system'): Promise<TimeData> {
+	timeData.mode = mode;
+
+	if (mode === 'system') {
+		timeData = {
+			offset: 0,
+			lastSync: new Date(),
+			synced: true,
+			mode: 'system'
+		};
+		console.log('Time sync: using OS system clock (NTP/PTP assumed)');
 		return timeData;
 	}
 
+	// ntp-api fallback
+	if (syncInProgress) return timeData;
 	syncInProgress = true;
 
 	try {
-		// Measure round trip time for accuracy
 		const requestStart = Date.now();
-
-		// Use worldtimeapi.org which returns NIST-synchronized time
 		const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
 
-		if (!response.ok) {
-			throw new Error('Time sync failed');
-		}
+		if (!response.ok) throw new Error('Time sync failed');
 
 		const requestEnd = Date.now();
 		const data = await response.json();
-
-		// Estimate one-way latency as half of round trip
 		const latency = (requestEnd - requestStart) / 2;
-
-		// Parse the ISO timestamp and adjust for latency
 		const serverTimestamp = new Date(data.utc_datetime).getTime() + latency;
 		const localTimestamp = Date.now();
 
 		timeData = {
-			serverTime: new Date(serverTimestamp),
 			offset: serverTimestamp - localTimestamp,
 			lastSync: new Date(),
-			synced: true
+			synced: true,
+			mode: 'ntp-api'
 		};
 
-		console.log(`Time synced. Offset: ${timeData.offset}ms`);
+		console.log(`Time synced via API. Offset: ${timeData.offset}ms, RTT: ${requestEnd - requestStart}ms`);
 	} catch (error) {
-		console.warn('Time sync failed, using local time:', error);
-		timeData.synced = false;
+		console.warn('API time sync failed, falling back to system clock:', error);
+		timeData = { offset: 0, lastSync: new Date(), synced: true, mode: 'system' };
 	} finally {
 		syncInProgress = false;
 	}

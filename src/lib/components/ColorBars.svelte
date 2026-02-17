@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getSyncedTime } from '$lib/timeSync';
+	import qrcode from 'qrcode-generator';
 
 	interface RemoteTimezone {
 		label: string;
@@ -16,6 +17,8 @@
 		nativeWidth?: number;
 		nativeHeight?: number;
 		showBall?: boolean;
+		showSpinner?: boolean;
+		showSyncQr?: boolean;
 		showShimmer?: boolean;
 		showGrid?: boolean;
 		showFrame?: boolean;
@@ -26,9 +29,10 @@
 		customImage?: string | null;
 		hAlign?: HAlign;
 		vAlign?: VAlign;
+		textScale?: number;
 	}
 
-	let { width, height, nativeWidth = 0, nativeHeight = 0, showBall = false, showShimmer = false, showGrid = false, showFrame = false, showUtc = true, showLocal = false, remoteTimezone = null, customText = '', customImage = null, hAlign = 'center', vAlign = 'center' }: Props = $props();
+	let { width, height, nativeWidth = 0, nativeHeight = 0, showBall = false, showSpinner = false, showSyncQr = false, showShimmer = false, showGrid = false, showFrame = false, showUtc = true, showLocal = false, remoteTimezone = null, customText = '', customImage = null, hAlign = 'center', vAlign = 'center', textScale = 1 }: Props = $props();
 
 	// Check if display is scaled (native differs from rendered)
 	const isScaled = $derived(nativeWidth > 0 && nativeHeight > 0 && (nativeWidth !== width || nativeHeight !== height));
@@ -152,10 +156,56 @@
 	let ballDirection = $state(1);
 	const ballRadius = $derived(Math.min(width, height) * 0.025);
 	const ballY = $derived(height * 0.67 / 2);
-	const ballSpeed = $derived(width / 120); // Cross screen in ~2 seconds at 60fps
+	const ballSpeed = $derived(width / 2); // pixels/sec — crosses screen in ~2 seconds
+	let spinnerAngle = $state(0);
+	const spinnerRadius = $derived(Math.max(width * 0.16, height * 0.22));
+	const spinnerCenterX = $derived(width * 0.5);
+	const spinnerCenterY = $derived(height * 0.5);
+	const spinnerStroke = $derived(Math.max(1.5, Math.min(width, height) * 0.0055));
+	const spinnerSpeed = 72; // degrees/sec (360deg / 5s)
+	const spinnerCycleMs = 5000;
+	const spinnerStartAngle = 180; // Align cycle start to 12 o'clock
+	let spinnerFlashFrameMs = $state(1000 / 60); // updated each frame to match actual frame duration
+	let spinnerPhaseMs = $state(0);
+	const spinnerCircumference = $derived(2 * Math.PI * spinnerRadius);
+	const spinnerSweepLength = $derived(spinnerCircumference * 0.24);
+	const spinnerSweepDash = $derived(`${spinnerSweepLength} ${Math.max(0.001, spinnerCircumference - spinnerSweepLength)}`);
+	let qrSize = $state(29);
+	const qrCell = $derived(Math.max(2, Math.min(width, height) * 0.0065));
+	const qrRenderSize = $derived(qrSize * qrCell);
+	const qrX = $derived(width * 0.02);
+	const qrPanelPadding = $derived(qrCell * 1.1);
+	const qrLabelHeight = $derived(height * 0.038);
+	const qrPanelWidth = $derived(qrRenderSize + qrPanelPadding * 2);
+	const qrPanelHeight = $derived(qrRenderSize + qrPanelPadding * 2 + qrLabelHeight);
+	const qrY = $derived((height - qrPanelHeight) / 2);
+	let qrToken = $state(0);
+	let qrLabel = $state('');
+	let qrDataUrl = $state('');
+
+	function generateSyncDataUrl(payload: string): { dataUrl: string, size: number } {
+		const qr = qrcode(0, 'L');
+		qr.addData(payload);
+		qr.make();
+		const count = qr.getModuleCount();
+		const canvas = document.createElement('canvas');
+		canvas.width = count;
+		canvas.height = count;
+		const ctx = canvas.getContext('2d')!;
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(0, 0, count, count);
+		ctx.fillStyle = '#000000';
+		for (let r = 0; r < count; r++) {
+			for (let c = 0; c < count; c++) {
+				if (qr.isDark(r, c)) ctx.fillRect(c, r, 1, 1);
+			}
+		}
+		return { dataUrl: canvas.toDataURL(), size: count };
+	}
 
 	function updateAnimation(timestamp: number) {
 		currentTime = getSyncedTime();
+		const deltaMs = lastFrameTime > 0 ? timestamp - lastFrameTime : 16.67;
 
 		// FPS calculation
 		frameCount++;
@@ -164,10 +214,11 @@
 			frameCount = 0;
 			fpsUpdateTime = timestamp;
 		}
+		spinnerFlashFrameMs = deltaMs;
 		lastFrameTime = timestamp;
 
 		if (showBall) {
-			ballX += ballSpeed * ballDirection;
+			ballX += ballSpeed * ballDirection * (deltaMs / 1000);
 			if (ballX >= width - ballRadius) {
 				ballX = width - ballRadius;
 				ballDirection = -1;
@@ -177,8 +228,25 @@
 			}
 		}
 
+		if (showSpinner) {
+			spinnerPhaseMs = ((currentTime.getTime() % spinnerCycleMs) + spinnerCycleMs) % spinnerCycleMs;
+			spinnerAngle = (spinnerPhaseMs / spinnerCycleMs) * 360;
+		}
+
+		if (showSyncQr) {
+			const frame = Math.floor((currentTime.getUTCMilliseconds() / 1000) * 30);
+			const nextToken = Math.floor(currentTime.getTime() / 1000);
+			if (nextToken !== qrToken) {
+				qrToken = nextToken;
+				qrLabel = `${currentTime.toISOString()}|${width}x${height}|f${frame.toString().padStart(2, '0')}`;
+				const qrResult = generateSyncDataUrl(qrLabel);
+				qrDataUrl = qrResult.dataUrl;
+				qrSize = qrResult.size;
+			}
+		}
+
 		if (showShimmer) {
-			shimmerX += shimmerSpeed;
+			shimmerX += shimmerSpeed * (deltaMs / 1000);
 			if (shimmerX > width) {
 				shimmerX = -shimmerWidth - height;
 			}
@@ -189,6 +257,10 @@
 
 	onMount(() => {
 		ballX = ballRadius;
+		qrLabel = `${currentTime.toISOString()}|${width}x${height}|f00`;
+		const qrInit = generateSyncDataUrl(qrLabel);
+		qrDataUrl = qrInit.dataUrl;
+		qrSize = qrInit.size;
 		animationFrame = requestAnimationFrame(updateAnimation);
 		return () => cancelAnimationFrame(animationFrame);
 	});
@@ -204,8 +276,8 @@
 	}
 
 	// Shimmer sweep animation
-	let shimmerX = $state(-width * 0.3 - height);
-	const shimmerSpeed = $derived(width / 240); // Cross screen in ~4 seconds at 60fps
+	let shimmerX = $state(0);
+	const shimmerSpeed = $derived(width / 5); // pixels/sec — crosses screen in ~5 seconds
 	const shimmerWidth = $derived(width * 0.3);
 </script>
 
@@ -308,6 +380,49 @@
 		/>
 	{/if}
 
+	{#if showSyncQr}
+		<g class="sync-qr">
+			<rect
+				x={qrX}
+				y={qrY}
+				width={qrPanelWidth}
+				height={qrPanelHeight}
+				fill="#ffffff"
+				stroke="rgba(0, 0, 0, 0.2)"
+				stroke-width={Math.max(1, qrCell * 0.25)}
+			/>
+			{#if qrDataUrl}
+				<image
+					x={qrX + qrPanelPadding}
+					y={qrY + qrPanelPadding}
+					width={qrRenderSize}
+					height={qrRenderSize}
+					href={qrDataUrl}
+					image-rendering="pixelated"
+				/>
+			{/if}
+			<rect
+				x={qrX + qrPanelPadding}
+				y={qrY + qrPanelPadding}
+				width={qrRenderSize}
+				height={qrRenderSize}
+				fill="none"
+				stroke="#ffffff"
+				stroke-width={Math.max(1, qrCell * 0.35)}
+			/>
+			<text
+				x={qrX + qrPanelPadding}
+				y={qrY + qrPanelHeight - qrLabelHeight * 0.32}
+				fill="#e5e7eb"
+				font-family="'Share Tech Mono', monospace"
+				font-size={height * 0.019}
+				letter-spacing="0.02em"
+			>
+				SYNC-LINK
+			</text>
+		</g>
+	{/if}
+
 	<!-- Info overlay - vertically stacked and positioned -->
 	{#if true}
 		{@const displays = getTimeDisplays()}
@@ -333,6 +448,8 @@
 		{@const timeStartRow = isScaled ? 3 : 2}
 		{@const imgBoxWidth = width * 0.12}
 		{@const imgBoxX = hAlign === 'left' ? margin + (boxWidth - imgBoxWidth) / 2 : hAlign === 'right' ? width - margin - boxWidth + (boxWidth - imgBoxWidth) / 2 : width * 0.5 - imgBoxWidth / 2}
+		{@const spinnerX = width * 0.5}
+		{@const spinnerY = height * 0.5}
 
 		<!-- Custom text (top of stack) -->
 		{#if customText}
@@ -352,7 +469,7 @@
 					dominant-baseline="middle"
 					fill="#ffffff"
 					font-family="'VT323', monospace"
-					font-size={height * 0.03}
+					font-size={height * 0.03 * textScale}
 					letter-spacing="0.05em"
 				>
 					{customText}
@@ -401,7 +518,7 @@
 				dominant-baseline="middle"
 				fill="#9ca3af"
 				font-family="'Share Tech Mono', monospace"
-				font-size={height * 0.016}
+				font-size={height * 0.016 * textScale}
 				letter-spacing="0.1em"
 				opacity="0.7"
 			>
@@ -414,7 +531,7 @@
 				dominant-baseline="middle"
 				fill={isScaled ? '#f59e0b' : '#e5e7eb'}
 				font-family="'Share Tech Mono', monospace"
-				font-size={height * 0.028}
+				font-size={height * 0.028 * textScale}
 				letter-spacing="0.02em"
 			>
 				{width}×{height}
@@ -429,7 +546,7 @@
 					dominant-baseline="middle"
 					fill="#9ca3af"
 					font-family="'Share Tech Mono', monospace"
-					font-size={height * 0.016}
+					font-size={height * 0.016 * textScale}
 					letter-spacing="0.1em"
 					opacity="0.7"
 				>
@@ -442,7 +559,7 @@
 					dominant-baseline="middle"
 					fill="#22c55e"
 					font-family="'Share Tech Mono', monospace"
-					font-size={height * 0.028}
+					font-size={height * 0.028 * textScale}
 					letter-spacing="0.02em"
 				>
 					{nativeWidth}×{nativeHeight}
@@ -457,7 +574,7 @@
 				dominant-baseline="middle"
 				fill="#9ca3af"
 				font-family="'Share Tech Mono', monospace"
-				font-size={height * 0.016}
+				font-size={height * 0.016 * textScale}
 				letter-spacing="0.1em"
 				opacity="0.7"
 			>
@@ -470,7 +587,7 @@
 				dominant-baseline="middle"
 				fill="#22c55e"
 				font-family="'Share Tech Mono', monospace"
-				font-size={height * 0.028}
+				font-size={height * 0.028 * textScale}
 				letter-spacing="0.02em"
 			>
 				{fps}
@@ -486,7 +603,7 @@
 					dominant-baseline="middle"
 					fill={display.color}
 					font-family="'Share Tech Mono', monospace"
-					font-size={height * 0.016}
+					font-size={height * 0.016 * textScale}
 					letter-spacing="0.1em"
 					opacity="0.7"
 				>
@@ -499,13 +616,103 @@
 					dominant-baseline="middle"
 					fill={display.color}
 					font-family="'Share Tech Mono', monospace"
-					font-size={height * 0.028}
+					font-size={height * 0.028 * textScale}
 					letter-spacing="0.02em"
 				>
 					{getTimecode(display.getTime(), display.isLocal)}
 				</text>
 			{/each}
 		</g>
+
+		{#if showSpinner}
+			{@const flashLineWidth = Math.max(1, spinnerStroke * 0.55)}
+			{@const starX = spinnerRadius * 0.18}
+			{@const starY = spinnerRadius * 0.11}
+			{@const starCore = spinnerRadius * 0.055}
+			<g transform="translate({spinnerX} {spinnerY})">
+				<defs>
+					<linearGradient id="spinner-sweep-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+						<stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+						<stop offset="8%" stop-color="#ffffff" stop-opacity="1" />
+						<stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+					</linearGradient>
+					<linearGradient id="spinner-sweep-core" x1="0%" y1="0%" x2="100%" y2="0%">
+						<stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+						<stop offset="32%" stop-color="#ffffff" stop-opacity="0" />
+					</linearGradient>
+				</defs>
+				<circle
+					cx="0"
+					cy="0"
+					r={spinnerRadius}
+					fill="none"
+					stroke="#050505"
+					stroke-width={spinnerStroke * 2.4}
+					opacity="0.95"
+				/>
+				<circle
+					cx="0"
+					cy="0"
+					r={spinnerRadius + spinnerStroke * 1.25}
+					fill="none"
+					stroke="#ffffff"
+					stroke-width="2"
+					opacity="1"
+				/>
+				<circle
+					cx="0"
+					cy="0"
+					r={Math.max(1, spinnerRadius - spinnerStroke * 1.25)}
+					fill="none"
+					stroke="#ffffff"
+					stroke-width="2"
+					opacity="1"
+				/>
+				<g transform="rotate({spinnerAngle + spinnerStartAngle})">
+					<circle
+						cx="0"
+						cy="0"
+						r={spinnerRadius}
+						fill="none"
+						stroke="url(#spinner-sweep-gradient)"
+						stroke-width={spinnerStroke * 2.1}
+						stroke-dasharray={spinnerSweepDash}
+						stroke-linecap="butt"
+						opacity="1"
+					/>
+					<circle
+						cx="0"
+						cy="0"
+						r={spinnerRadius}
+						fill="none"
+						stroke="url(#spinner-sweep-core)"
+						stroke-width={spinnerStroke * 1.05}
+						stroke-dasharray={spinnerSweepDash}
+						stroke-linecap="butt"
+						opacity="1"
+					/>
+				</g>
+
+				{#if spinnerPhaseMs < spinnerFlashFrameMs}
+					<!-- Horizontal crosshair line -->
+					<line
+						x1={-spinnerX}
+						y1="0"
+						x2={width - spinnerX}
+						y2="0"
+						stroke="#ffffff"
+						stroke-width="1"
+						opacity="0.9"
+					/>
+					<!-- 4-pointed starburst with curved edges -->
+					<path
+						d="M {starX},0 C {starCore},0 0,-{starCore} 0,-{starY} C 0,-{starCore} -{starCore},0 -{starX},0 C -{starCore},0 0,{starCore} 0,{starY} C 0,{starCore} {starCore},0 {starX},0 Z"
+						fill="#ffffff"
+						opacity="1"
+					/>
+				{/if}
+			</g>
+		{/if}
 	{/if}
 
 	<!-- SMPTE Safe Area Grid (ST 2046-1) -->

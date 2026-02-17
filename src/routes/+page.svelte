@@ -48,6 +48,8 @@
 	let isFullscreen = $state(false);
 	let barsContainer: HTMLElement;
 	let ballEnabled = $state(false);
+	let spinnerEnabled = $state(false);
+	let syncQrEnabled = $state(false);
 	let shimmerEnabled = $state(false);
 	let gridEnabled = $state(false);
 	let frameEnabled = $state(false);
@@ -69,6 +71,8 @@
 	type VAlign = 'top' | 'center' | 'bottom';
 	let hAlign = $state<HAlign>('center');
 	let vAlign = $state<VAlign>('center');
+	let textScale = $state(1);
+	let settingsLoaded = $state(false);
 
 	const timezones = [
 		{ value: 'Pacific/Honolulu', label: 'HST', name: 'Hawaii' },
@@ -125,6 +129,8 @@
 	interface Settings {
 		resolution: string;
 		ball: boolean;
+		spinner: boolean;
+		syncQr: boolean;
 		shimmer: boolean;
 		grid: boolean;
 		frame: boolean;
@@ -135,6 +141,7 @@
 		customText: string;
 		hAlign: HAlign;
 		vAlign: VAlign;
+		textScale: number;
 	}
 
 	function saveSettings() {
@@ -142,6 +149,8 @@
 		const settings: Settings = {
 			resolution: resolution.name,
 			ball: ballEnabled,
+			spinner: spinnerEnabled,
+			syncQr: syncQrEnabled,
 			shimmer: shimmerEnabled,
 			grid: gridEnabled,
 			frame: frameEnabled,
@@ -151,7 +160,8 @@
 			timezone: selectedTimezone,
 			customText: customText,
 			hAlign: hAlign,
-			vAlign: vAlign
+			vAlign: vAlign,
+			textScale: textScale
 		};
 		localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 	}
@@ -168,6 +178,8 @@
 			if (foundRes) resolution = foundRes;
 
 			ballEnabled = settings.ball ?? false;
+			spinnerEnabled = settings.spinner ?? false;
+			syncQrEnabled = settings.syncQr ?? false;
 			shimmerEnabled = settings.shimmer ?? false;
 			gridEnabled = settings.grid ?? false;
 			frameEnabled = settings.frame ?? false;
@@ -178,6 +190,7 @@
 			customText = settings.customText ?? '';
 			hAlign = settings.hAlign ?? 'center';
 			vAlign = settings.vAlign ?? 'center';
+			textScale = settings.textScale ?? 1;
 		} catch (e) {
 			console.warn('Failed to load settings:', e);
 		}
@@ -185,16 +198,17 @@
 
 	// Save settings when they change
 	$effect(() => {
+		if (!settingsLoaded) return;
+
 		// Access all settings to track them
-		resolution; ballEnabled; shimmerEnabled; gridEnabled; frameEnabled;
+		resolution; ballEnabled; spinnerEnabled; syncQrEnabled; shimmerEnabled; gridEnabled; frameEnabled;
 		showUtcTime; showLocalTime; showRemoteTime; selectedTimezone; customText;
-		hAlign; vAlign;
+		hAlign; vAlign; textScale;
 		saveSettings();
 	});
 	let showFullscreenHint = $state(false);
 	let hintTimeout: number;
-
-	async function toggleFullscreen() {
+async function toggleFullscreen() {
 		if (!document.fullscreenElement) {
 			await barsContainer.requestFullscreen();
 			isFullscreen = true;
@@ -207,6 +221,7 @@
 	onMount(() => {
 		// Load saved settings
 		loadSettings();
+		settingsLoaded = true;
 
 		// Initial time sync
 		syncTime();
@@ -237,6 +252,12 @@
 
 		document.addEventListener('fullscreenchange', handleFullscreenChange);
 
+		const handleVisibilityChange = () => {
+			if (!document.hidden) syncTime();
+		};
+
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+
 		// Track container size for "Fit Display" mode
 		const resizeObserver = new ResizeObserver((entries) => {
 			for (const entry of entries) {
@@ -251,6 +272,7 @@
 
 		return () => {
 			document.removeEventListener('fullscreenchange', handleFullscreenChange);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			resizeObserver.disconnect();
 			clearTimeout(hintTimeout);
 		};
@@ -270,6 +292,8 @@
 			{nativeWidth}
 			{nativeHeight}
 			showBall={ballEnabled}
+			showSpinner={spinnerEnabled}
+			showSyncQr={syncQrEnabled}
 			showShimmer={shimmerEnabled}
 			showGrid={gridEnabled}
 			showFrame={frameEnabled}
@@ -280,6 +304,7 @@
 			{customImage}
 			{hAlign}
 			{vAlign}
+			{textScale}
 		/>
 
 		{#if showFullscreenHint}
@@ -287,6 +312,7 @@
 				<span>ESC to exit</span>
 			</div>
 		{/if}
+
 	</div>
 
 	<div class="controls">
@@ -320,6 +346,14 @@
 			<label class="toggle">
 				<input type="checkbox" bind:checked={ballEnabled} />
 				<span>BALL</span>
+			</label>
+			<label class="toggle">
+				<input type="checkbox" bind:checked={spinnerEnabled} />
+				<span>SPINNER</span>
+			</label>
+			<label class="toggle">
+				<input type="checkbox" bind:checked={syncQrEnabled} />
+				<span>SYNC QR</span>
 			</label>
 			<label class="toggle">
 				<input type="checkbox" bind:checked={shimmerEnabled} />
@@ -393,6 +427,20 @@
 			</div>
 		</div>
 
+		<div class="control-group text-scale-control">
+			<label class="control-label" for="text-scale">TEXT</label>
+			<input
+				id="text-scale"
+				type="range"
+				min="0.5"
+				max="3"
+				step="0.1"
+				bind:value={textScale}
+				class="scale-slider"
+			/>
+			<span class="scale-value">{textScale.toFixed(1)}×</span>
+		</div>
+
 		<button class="fullscreen-btn" onclick={toggleFullscreen}>
 			{isFullscreen ? 'EXIT' : 'FULLSCREEN'}
 		</button>
@@ -460,6 +508,24 @@
 	@keyframes fade-out {
 		0%, 70% { opacity: 1; }
 		100% { opacity: 0; }
+	}
+
+.text-scale-control {
+		gap: 0.4rem;
+	}
+
+	.scale-slider {
+		width: 5rem;
+		accent-color: #22c55e;
+		cursor: pointer;
+	}
+
+	.scale-value {
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		color: #22c55e;
+		min-width: 2.5rem;
+		letter-spacing: 0.05em;
 	}
 
 	.controls {
